@@ -32,8 +32,14 @@ type MeResponse = {
 type GroupItem = {
   id: number;
   name: string;
+  display_name?: string;
+  prefix?: string;
+  admission_year?: number;
+  course?: number;
+  suffix?: string;
   department_id?: number | null;
   department_name?: string | null;
+  is_active?: boolean;
 };
 
 type DepartmentItem = {
@@ -42,6 +48,8 @@ type DepartmentItem = {
   description?: string | null;
   is_active?: boolean;
   created_at?: string | null;
+  groups_count?: number;
+  groups?: GroupItem[];
 };
 
 type UserRole = "teacher" | "head" | "manager" | "admin";
@@ -156,6 +164,11 @@ export default function AdminDocuments() {
   const [newDepartmentName, setNewDepartmentName] = useState("");
   const [newDepartmentDesc, setNewDepartmentDesc] = useState("");
   const [creatingDepartment, setCreatingDepartment] = useState(false);
+  const [departmentGroupDrafts, setDepartmentGroupDrafts] = useState<Record<number, number[]>>({});
+  const [savingDepartmentGroupsId, setSavingDepartmentGroupsId] = useState<number | null>(null);
+  const [quickGroupId, setQuickGroupId] = useState<number | "">("");
+  const [quickDepartmentId, setQuickDepartmentId] = useState<number | "">("");
+  const [quickAssignLoading, setQuickAssignLoading] = useState(false);
 
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [editLogin, setEditLogin] = useState("");
@@ -344,7 +357,7 @@ export default function AdminDocuments() {
 
   async function loadGroups() {
     try {
-      const res = await api.get("/groups");
+      const res = await api.get("/groups?include_inactive=true");
       setGroups(res.data);
     } catch (e: any) {
       showError(e?.response?.data?.detail || "Ошибка загрузки групп");
@@ -359,6 +372,23 @@ export default function AdminDocuments() {
       showError(e?.response?.data?.detail || "Ошибка загрузки отделений");
     }
   }
+
+  useEffect(() => {
+    if (departments.length === 0) return;
+
+    setDepartmentGroupDrafts(() => {
+      const next: Record<number, number[]> = {};
+
+      departments.forEach((department) => {
+        next[department.id] = groups
+          .filter((group) => group.department_id === department.id)
+          .map((group) => group.id);
+      });
+
+      return next;
+    });
+  }, [departments, groups]);
+
 
   useEffect(() => {
     loadMe();
@@ -571,6 +601,79 @@ export default function AdminDocuments() {
       setEditDepartments((prev) => prev.filter((id) => id !== departmentId));
     }
   }
+
+  function toggleDepartmentGroup(departmentId: number, groupId: number, checked: boolean) {
+    setDepartmentGroupDrafts((prev) => {
+      const current = prev[departmentId] || [];
+      const next = checked
+        ? current.includes(groupId)
+          ? current
+          : [...current, groupId]
+        : current.filter((id) => id !== groupId);
+
+      return {
+        ...prev,
+        [departmentId]: next,
+      };
+    });
+  }
+
+  function getDepartmentGroupIds(departmentId: number) {
+    return departmentGroupDrafts[departmentId] || [];
+  }
+
+  function getGroupsByDepartment(departmentId: number) {
+    return groups.filter((group) => group.department_id === departmentId);
+  }
+
+  async function saveDepartmentGroups(departmentId: number, departmentName: string) {
+    clearMessage();
+
+    try {
+      setSavingDepartmentGroupsId(departmentId);
+
+      await api.patch(`/departments/${departmentId}/groups`, {
+        group_ids: getDepartmentGroupIds(departmentId),
+      });
+
+      await loadGroups();
+      await loadDepartments();
+      showSuccess(`Группы отделения ${departmentName} обновлены`);
+    } catch (e: any) {
+      showError(e?.response?.data?.detail || "Ошибка сохранения групп отделения");
+    } finally {
+      setSavingDepartmentGroupsId(null);
+    }
+  }
+
+  async function assignSingleGroupToDepartment() {
+    clearMessage();
+
+    if (!quickGroupId) {
+      showError("Выберите группу");
+      return;
+    }
+
+    try {
+      setQuickAssignLoading(true);
+
+      await api.patch(`/departments/groups/${quickGroupId}/department`, {
+        department_id: quickDepartmentId || null,
+      });
+
+      setQuickGroupId("");
+      setQuickDepartmentId("");
+
+      await loadGroups();
+      await loadDepartments();
+      showSuccess("Отделение группы обновлено");
+    } catch (e: any) {
+      showError(e?.response?.data?.detail || "Ошибка привязки группы к отделению");
+    } finally {
+      setQuickAssignLoading(false);
+    }
+  }
+
 
   async function saveUser(userId: number) {
     clearMessage();
@@ -1465,6 +1568,64 @@ export default function AdminDocuments() {
           <div className="card section-card">
             <div className="page-header" style={{ marginBottom: 16 }}>
               <div>
+                <h3 style={{ margin: 0 }}>Быстрая привязка группы к отделению</h3>
+                <p className="page-subtitle" style={{ marginTop: 6 }}>
+                  Второй способ управления: выбери конкретную группу и назначь ей отделение
+                </p>
+              </div>
+            </div>
+
+            <div className="grid-3">
+              <div>
+                <label className="label">Группа</label>
+                <select
+                  className="select"
+                  style={selectStyle}
+                  value={quickGroupId}
+                  onChange={(e) => setQuickGroupId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">Выберите группу</option>
+                  {groups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name} {group.department_name ? `— ${group.department_name}` : "— без отделения"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Отделение</label>
+                <select
+                  className="select"
+                  style={selectStyle}
+                  value={quickDepartmentId}
+                  onChange={(e) => setQuickDepartmentId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">Без отделения</option>
+                  {departments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Действие</label>
+                <button
+                  className="btn btn-primary"
+                  onClick={assignSingleGroupToDepartment}
+                  disabled={quickAssignLoading}
+                >
+                  {quickAssignLoading ? "Сохранение..." : "Назначить отделение"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card section-card">
+            <div className="page-header" style={{ marginBottom: 16 }}>
+              <div>
                 <h3 style={{ margin: 0 }}>Список отделений</h3>
                 <p className="page-subtitle" style={{ marginTop: 6 }}>
                   Эти отделения можно назначать пользователям с ролью head
@@ -1484,31 +1645,95 @@ export default function AdminDocuments() {
               </div>
             ) : (
               <div className="stack" style={{ gap: 12 }}>
-                {departments.map((d) => (
-                  <div key={d.id} className="info-item">
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{d.name}</div>
-                      <div className="page-subtitle" style={{ marginTop: 4 }}>
-                        {d.description || "Описание не указано"}
+                {departments.map((d) => {
+                  const currentDepartmentGroups = getGroupsByDepartment(d.id);
+                  const selectedDepartmentGroups = getDepartmentGroupIds(d.id);
+                  const availableGroupsForDepartment = groups.filter(
+                    (group) => !group.department_id || group.department_id === d.id
+                  );
+
+                  return (
+                    <div key={d.id} className="card section-card">
+                      <div className="info-item">
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{d.name}</div>
+                          <div className="page-subtitle" style={{ marginTop: 4 }}>
+                            {d.description || "Описание не указано"}
+                          </div>
+
+                          {d.created_at && (
+                            <div className="page-subtitle" style={{ marginTop: 4 }}>
+                              Создано: {formatDate(d.created_at)}
+                            </div>
+                          )}
+
+                          <div className="row" style={{ marginTop: 10 }}>
+                            <span className="badge badge-info">
+                              Групп: {currentDepartmentGroups.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        {me?.role === "admin" && (
+                          <button
+                            className="btn btn-danger"
+                            onClick={() => deleteDepartment(d.id, d.name)}
+                          >
+                            Удалить
+                          </button>
+                        )}
                       </div>
 
-                      {d.created_at && (
-                        <div className="page-subtitle" style={{ marginTop: 4 }}>
-                          Создано: {formatDate(d.created_at)}
-                        </div>
-                      )}
-                    </div>
+                      <div style={{ marginTop: 18 }}>
+                        <div className="page-header" style={{ marginBottom: 12 }}>
+                          <div>
+                            <h4 style={{ margin: 0 }}>Группы отделения</h4>
+                            <p className="page-subtitle" style={{ marginTop: 6 }}>
+                              Отметь группы, которые должны относиться к этому отделению
+                            </p>
+                          </div>
 
-                    {me?.role === "admin" && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => deleteDepartment(d.id, d.name)}
-                      >
-                        Удалить
-                      </button>
-                    )}
-                  </div>
-                ))}
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => saveDepartmentGroups(d.id, d.name)}
+                            disabled={savingDepartmentGroupsId === d.id}
+                          >
+                            {savingDepartmentGroupsId === d.id ? "Сохранение..." : "Сохранить группы"}
+                          </button>
+                        </div>
+
+                        {availableGroupsForDepartment.length === 0 ? (
+                          <div className="info-item">
+                            <div className="page-subtitle">
+                              Нет свободных групп для привязки к этому отделению
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid-3">
+                            {availableGroupsForDepartment.map((group) => (
+                              <label
+                                key={group.id}
+                                className="info-item"
+                                style={{ cursor: "pointer", alignItems: "center" }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedDepartmentGroups.includes(group.id)}
+                                    onChange={(e) =>
+                                      toggleDepartmentGroup(d.id, group.id, e.target.checked)
+                                    }
+                                  />
+                                  <span>{group.name}</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

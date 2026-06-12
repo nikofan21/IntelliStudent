@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models.models import Department, User, UserDepartment
+from ..models.models import Department, Group, User, UserDepartment
 from ..auth.security import get_current_user
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -36,15 +36,53 @@ class AssignDepartments(BaseModel):
     department_ids: List[int]
 
 
-# ===== SERIALIZER =====
+class AssignGroupsToDepartment(BaseModel):
+    group_ids: List[int]
 
-def serialize_department(dep: Department):
+
+class AssignGroupDepartment(BaseModel):
+    department_id: int | None = None
+
+
+# ===== HELPERS =====
+
+def ensure_department_manager(user: User):
+    if user.role not in ["admin", "manager"]:
+        raise HTTPException(status_code=403, detail="Only admin or manager")
+
+
+def get_head_department_ids(db: Session, user: User) -> list[int]:
+    links = db.query(UserDepartment).filter(UserDepartment.user_id == user.id).all()
+    return [link.department_id for link in links]
+
+
+def serialize_group_short(group: Group):
+    return {
+        "id": group.id,
+        "name": group.name,
+        "display_name": group.name,
+        "department_id": group.department_id,
+        "department_name": group.department.name if group.department else None,
+        "is_active": group.is_active,
+    }
+
+
+def serialize_department(dep: Department, include_groups: bool = True):
+    groups = []
+    if include_groups:
+        groups = [
+            serialize_group_short(group)
+            for group in sorted(dep.groups or [], key=lambda g: (not g.is_active, g.name or ""))
+        ]
+
     return {
         "id": dep.id,
         "name": dep.name,
         "description": dep.description,
         "is_active": dep.is_active,
         "created_at": dep.created_at,
+        "groups_count": len(dep.groups or []),
+        "groups": groups,
     }
 
 
@@ -56,8 +94,7 @@ def create_department(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "manager"]:
-        raise HTTPException(status_code=403, detail="Only admin or manager can create departments")
+    ensure_department_manager(user)
 
     name = payload.name.strip()
     if not name:
@@ -91,16 +128,119 @@ def list_departments(
     query = db.query(Department)
 
     if user.role == "head":
-        links = db.query(UserDepartment).filter(UserDepartment.user_id == user.id).all()
-        ids = [l.department_id for l in links]
-
+        ids = get_head_department_ids(db, user)
         if not ids:
             return []
-
         query = query.filter(Department.id.in_(ids))
 
     departments = query.order_by(Department.name.asc()).all()
     return [serialize_department(d) for d in departments]
+
+
+@router.get("/{department_id}/groups")
+def get_department_groups(
+    department_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role not in ["admin", "manager", "head"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    dep = db.query(Department).filter(Department.id == department_id).first()
+    if not dep:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    if user.role == "head":
+        ids = get_head_department_ids(db, user)
+        if department_id not in ids:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    groups = db.query(Group).filter(Group.department_id == department_id).order_by(Group.name.asc()).all()
+
+    return {
+        "department": serialize_department(dep, include_groups=False),
+        "groups": [serialize_group_short(group) for group in groups],
+    }
+
+
+@router.patch("/{department_id}/groups")
+def assign_groups_to_department(
+    department_id: int,
+    payload: AssignGroupsToDepartment,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    ensure_department_manager(user)
+
+    dep = db.query(Department).filter(Department.id == department_id).first()
+    if not dep:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    group_ids = sorted(set(payload.group_ids or []))
+
+    if group_ids:
+        found_groups = db.query(Group).filter(Group.id.in_(group_ids)).all()
+        found_ids = {group.id for group in found_groups}
+        missing = [group_id for group_id in group_ids if group_id not in found_ids]
+
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Groups not found: {missing}",
+            )
+
+    # Снимаем с отделения те группы, которые убрали в интерфейсе.
+    db.query(Group).filter(
+        Group.department_id == department_id,
+        ~Group.id.in_(group_ids) if group_ids else True,
+    ).update({Group.department_id: None}, synchronize_session=False)
+
+    # Назначаем выбранные группы этому отделению.
+    if group_ids:
+        db.query(Group).filter(Group.id.in_(group_ids)).update(
+            {Group.department_id: department_id},
+            synchronize_session=False,
+        )
+
+    db.commit()
+    db.refresh(dep)
+
+    groups = db.query(Group).filter(Group.department_id == department_id).order_by(Group.name.asc()).all()
+
+    return {
+        "message": "Groups assigned to department",
+        "department": serialize_department(dep, include_groups=False),
+        "group_ids": [group.id for group in groups],
+        "groups": [serialize_group_short(group) for group in groups],
+    }
+
+
+@router.patch("/groups/{group_id}/department")
+def assign_single_group_to_department(
+    group_id: int,
+    payload: AssignGroupDepartment,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    ensure_department_manager(user)
+
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    if payload.department_id is not None:
+        dep = db.query(Department).filter(Department.id == payload.department_id).first()
+        if not dep:
+            raise HTTPException(status_code=404, detail="Department not found")
+
+    group.department_id = payload.department_id
+    db.commit()
+    db.refresh(group)
+
+    return {
+        "message": "Group department updated",
+        "group": serialize_group_short(group),
+    }
 
 
 @router.get("/{department_id}")
@@ -114,12 +254,8 @@ def get_department(
         raise HTTPException(status_code=404, detail="Department not found")
 
     if user.role == "head":
-        links = db.query(UserDepartment).filter(
-            UserDepartment.user_id == user.id,
-            UserDepartment.department_id == department_id
-        ).first()
-
-        if not links:
+        ids = get_head_department_ids(db, user)
+        if department_id not in ids:
             raise HTTPException(status_code=403, detail="Access denied")
 
     return serialize_department(dep)
@@ -132,8 +268,7 @@ def update_department(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "manager"]:
-        raise HTTPException(status_code=403, detail="Only admin or manager")
+    ensure_department_manager(user)
 
     dep = db.query(Department).filter(Department.id == department_id).first()
     if not dep:
@@ -174,6 +309,12 @@ def delete_department(
     if not dep:
         raise HTTPException(status_code=404, detail="Department not found")
 
+    # Чтобы удаление отделения не ломалось из-за групп, сначала снимаем привязку.
+    db.query(Group).filter(Group.department_id == department_id).update(
+        {Group.department_id: None},
+        synchronize_session=False,
+    )
+
     db.delete(dep)
     db.commit()
 
@@ -192,32 +333,27 @@ def assign_departments_to_user(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "manager"]:
-        raise HTTPException(status_code=403, detail="Only admin or manager")
+    ensure_department_manager(user)
 
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # удаляем старые связи
     db.query(UserDepartment).filter(UserDepartment.user_id == user_id).delete()
 
-    # добавляем новые
-    for dep_id in payload.department_ids:
+    department_ids = sorted(set(payload.department_ids or []))
+
+    for dep_id in department_ids:
         dep = db.query(Department).filter(Department.id == dep_id).first()
         if not dep:
             raise HTTPException(status_code=404, detail=f"Department {dep_id} not found")
 
-        link = UserDepartment(
-            user_id=user_id,
-            department_id=dep_id
-        )
-        db.add(link)
+        db.add(UserDepartment(user_id=user_id, department_id=dep_id))
 
     db.commit()
 
     return {
         "message": "Departments assigned",
         "user_id": user_id,
-        "department_ids": payload.department_ids
+        "department_ids": department_ids
     }
