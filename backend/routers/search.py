@@ -308,6 +308,8 @@ def search_student(
 @router.get("/analytics")
 def search_analytics(
     q: str = Query(..., description="Любой поисковый запрос"),
+    department_id: int | None = Query(None, description="Department ID filter"),
+    group_id: int | None = Query(None, description="Group ID filter"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -343,6 +345,12 @@ def search_analytics(
                 continue
 
             if not user_can_access_group(db, user, student.group):
+                continue
+
+            if department_id is not None and student.group.department_id != department_id:
+                continue
+
+            if group_id is not None and student.group_id != group_id:
                 continue
 
             matched_fragment = None

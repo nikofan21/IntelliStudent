@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import PageHeader from "../components/ui/PageHeader";
 import EmptyState from "../components/ui/EmptyState";
@@ -10,6 +10,15 @@ type Group = {
   id: number;
   name: string;
   display_name: string;
+  department_id?: number | null;
+  department_name?: string | null;
+};
+
+type Department = {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
 };
 
 type SearchDoc = {
@@ -144,6 +153,7 @@ export default function SearchPage() {
   const [mode, setMode] = useState<"students" | "analytics">("students");
 
   const [groups, setGroups] = useState<Group[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [groupId, setGroupId] = useState<number | "">("");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
@@ -152,6 +162,8 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [analyticsQuery, setAnalyticsQuery] = useState("");
+  const [analyticsDepartmentId, setAnalyticsDepartmentId] = useState<number | "">("");
+  const [analyticsGroupId, setAnalyticsGroupId] = useState<number | "">("");
   const [analyticsResult, setAnalyticsResult] = useState<AnalyticsResult | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [showAnalyticsList, setShowAnalyticsList] = useState(false);
@@ -182,11 +194,23 @@ export default function SearchPage() {
     confirmText: "Сохранить",
     onConfirm: null,
   });
+  const analyticsGroups = useMemo(() => {
+    if (!analyticsDepartmentId) return groups;
+    return groups.filter((g) => g.department_id === analyticsDepartmentId);
+  }, [groups, analyticsDepartmentId]);
 
-  async function loadGroups() {
-    const gRes = await api.get("/groups");
+
+  async function loadFilters() {
+    const [gRes, dRes] = await Promise.all([
+      api.get("/groups"),
+      api.get("/departments"),
+    ]);
+
     const loadedGroups = Array.isArray(gRes.data) ? gRes.data : [];
+    const loadedDepartments = Array.isArray(dRes.data) ? dRes.data : [];
+
     setGroups(loadedGroups);
+    setDepartments(loadedDepartments);
 
     if (!groupId && loadedGroups.length > 0) {
       setGroupId(loadedGroups[0].id);
@@ -194,12 +218,18 @@ export default function SearchPage() {
   }
 
   useEffect(() => {
-    loadGroups().catch(() => {});
+    loadFilters().catch(() => {});
   }, []);
 
   function switchMode(nextMode: "students" | "analytics") {
     setMode(nextMode);
     setError(null);
+  }
+
+  function changeAnalyticsDepartment(value: string) {
+    const nextDepartmentId = value === "" ? "" : Number(value);
+    setAnalyticsDepartmentId(nextDepartmentId);
+    setAnalyticsGroupId("");
   }
 
   function openConfirmModal(params: {
@@ -341,9 +371,17 @@ export default function SearchPage() {
     setAnalyticsLoading(true);
 
     try {
-      const res = await api.get("/search/analytics", {
-        params: { q: query },
-      });
+      const params: Record<string, string | number> = { q: query };
+
+      if (analyticsDepartmentId !== "") {
+        params.department_id = analyticsDepartmentId;
+      }
+
+      if (analyticsGroupId !== "") {
+        params.group_id = analyticsGroupId;
+      }
+
+      const res = await api.get("/search/analytics", { params });
 
       setAnalyticsResult(res.data);
     } catch (e: any) {
@@ -830,14 +868,49 @@ export default function SearchPage() {
       <div className="stack">
         <form onSubmit={doAnalyticsSearch} className="card section-card">
           <div className="grid-3">
-            <div style={{ gridColumn: "span 2" }}>
+            <div>
               <label className="label">Запрос по данным документов</label>
               <input
                 className="input"
-                placeholder="Введите любой параметр для поиска"
+                placeholder="Например: Коянкус, уйгур, общежитие"
                 value={analyticsQuery}
                 onChange={(e) => setAnalyticsQuery(e.target.value)}
               />
+            </div>
+
+            <div>
+              <label className="label">Отделение</label>
+              <select
+                className="select"
+                value={analyticsDepartmentId}
+                onChange={(e) => changeAnalyticsDepartment(e.target.value)}
+              >
+                <option value="">Все доступные отделения</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="label">Группа</label>
+              <select
+                className="select"
+                value={analyticsGroupId}
+                onChange={(e) =>
+                  setAnalyticsGroupId(e.target.value === "" ? "" : Number(e.target.value))
+                }
+              >
+                <option value="">Все доступные группы</option>
+                {analyticsGroups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.display_name || g.name}
+                    {g.department_name ? ` • ${g.department_name}` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div style={{ display: "flex", alignItems: "end" }}>
@@ -862,6 +935,17 @@ export default function SearchPage() {
                 <div className="info-item">
                   <span className="info-item-label">Найдено студентов</span>
                   <span className="info-item-value">{analyticsResult.count}</span>
+                </div>
+
+                <div className="info-item">
+                  <span className="info-item-label">Фильтр</span>
+                  <span className="info-item-value">
+                    {analyticsGroupId
+                      ? `Группа: ${groups.find((g) => g.id === analyticsGroupId)?.display_name || analyticsGroupId}`
+                      : analyticsDepartmentId
+                      ? `Отделение: ${departments.find((d) => d.id === analyticsDepartmentId)?.name || analyticsDepartmentId}`
+                      : "Все доступные данные"}
+                  </span>
                 </div>
               </div>
 
