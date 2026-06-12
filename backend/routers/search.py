@@ -40,11 +40,87 @@ def normalize_text(value: Optional[str]) -> str:
 
     value = str(value).lower()
     value = value.replace("ё", "е")
+    value = value.replace("\u00a0", " ")
     value = value.replace("\n", " ")
     value = value.replace("\r", " ")
     value = value.replace("\t", " ")
+    value = re.sub(r"[^a-zа-я0-9]+", " ", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value
+
+
+try:
+    from rapidfuzz import fuzz
+except Exception:
+    fuzz = None
+
+
+WORD_RE = re.compile(r"[a-zа-я0-9]+")
+
+# Смысловые группы для аналитики.
+# Они нужны, чтобы запрос "дети без родителей" находил "сирота",
+# а "ограниченные возможности" находил "инвалидность" и т.д.
+SEMANTIC_DICTIONARY: Dict[str, List[str]] = {
+    "nationality_uigur": [
+        "уйгур", "уйгуры", "уйгуров", "уйгурка", "уйгурский", "уйгурская",
+        "уйгурская национальность", "национальность уйгур", "uigur", "uyghur",
+    ],
+    "orphan": [
+        "сирота", "сироты", "сирот", "сиротство", "без родителей",
+        "без попечения", "без попечения родителей", "оставшийся без попечения",
+        "оставшаяся без попечения", "опека", "опекун", "попечитель",
+    ],
+    "large_family": [
+        "многодет", "многодетная", "многодетные", "многодетной",
+        "многодетная семья", "из многодетной семьи", "3 и более детей",
+        "трое детей", "четверо детей", "пять детей",
+    ],
+    "disability": [
+        "инвалид", "инвалидность", "инвалиды", "лицо с инвалидностью",
+        "овз", "ограниченные возможности", "ограниченными возможностями",
+        "особые образовательные потребности", "ооп",
+    ],
+    "dormitory": [
+        "общежитие", "общежитии", "проживает в общежитии", "нуждается в общежитии",
+        "место в общежитии", "иногородний", "иногородняя",
+    ],
+    "low_income": [
+        "малообеспеч", "малоимущ", "малообеспеченная семья",
+        "адресная социальная помощь", "асп", "социальная помощь",
+    ],
+    "single_parent": [
+        "неполная семья", "одинокая мать", "одинокий отец",
+        "воспитывается матерью", "воспитывается отцом", "один родитель",
+    ],
+    "village": [
+        "село", "сельский", "сельская", "поселок", "посёлок",
+        "аул", "район", "область",
+    ],
+}
+
+
+def simple_stem(word: str) -> str:
+    word = normalize_text(word)
+    if not word:
+        return ""
+
+    endings = [
+        "иями", "ями", "ами", "ого", "ему", "ыми", "ими",
+        "ая", "яя", "ое", "ее", "ые", "ие", "его",
+        "ому", "ой", "ей", "ам", "ям", "ах", "ях",
+        "ов", "ев", "ом", "ем", "ым", "им", "ую", "юю",
+        "а", "я", "ы", "и", "е", "у", "ю", "о",
+    ]
+
+    for ending in endings:
+        if len(word) > 5 and word.endswith(ending):
+            return word[:-len(ending)]
+
+    return word
+
+
+def tokenize(text: str) -> List[str]:
+    return WORD_RE.findall(normalize_text(text))
 
 
 def build_query_variants(query: str) -> List[str]:
@@ -53,34 +129,46 @@ def build_query_variants(query: str) -> List[str]:
         return []
 
     variants = {q}
+    q_tokens = tokenize(q)
+    q_stems = {simple_stem(token) for token in q_tokens if len(token) >= 3}
 
-    dictionary = {
-        "уйгуры": ["уйгур", "уйгуры", "уйгуров", "уйгурка", "уйгурский", "уйгурская"],
-        "уйгур": ["уйгур", "уйгуры", "уйгуров", "уйгурка", "уйгурский", "уйгурская"],
-        "сироты": ["сирота", "сироты", "сирот", "сиротство", "без попечения"],
-        "сирота": ["сирота", "сироты", "сирот", "сиротство", "без попечения"],
-        "многодетные": ["многодет", "многодетная семья", "многодетной", "3 и более детей"],
-        "многодетная": ["многодет", "многодетная семья", "многодетной", "3 и более детей"],
-        "инвалиды": ["инвалид", "инвалидность", "овз", "ограниченные возможности"],
-        "инвалид": ["инвалид", "инвалидность", "овз", "ограниченные возможности"],
-        "общежитие": ["общежитие", "общежитии", "проживает в общежитии", "нуждается в общежитии"],
-    }
+    for category_phrases in SEMANTIC_DICTIONARY.values():
+        normalized_phrases = [normalize_text(phrase) for phrase in category_phrases]
 
-    if q in dictionary:
-        variants.update(dictionary[q])
+        category_tokens = set()
+        category_stems = set()
+
+        for phrase in normalized_phrases:
+            category_tokens.update(tokenize(phrase))
+            category_stems.update(simple_stem(token) for token in tokenize(phrase) if len(token) >= 3)
+
+        category_hit = False
+
+        if q in normalized_phrases:
+            category_hit = True
+
+        if not category_hit and q_tokens:
+            category_hit = any(q in phrase or phrase in q for phrase in normalized_phrases)
+
+        if not category_hit and q_stems:
+            category_hit = bool(q_stems.intersection(category_stems))
+
+        if category_hit:
+            variants.update(normalized_phrases)
+            variants.update(category_tokens)
+            variants.update(stem for stem in category_stems if len(stem) >= 4)
+
+    for token in q_tokens:
+        if len(token) >= 3:
+            variants.add(token)
+        stem = simple_stem(token)
+        if len(stem) >= 4:
+            variants.add(stem)
 
     if len(q) >= 5:
         variants.add(q[:5])
 
-    return [v for v in variants if v]
-
-
-def text_has_query(text: str, query_variants: List[str]) -> bool:
-    normalized = normalize_text(text)
-    if not normalized:
-        return False
-
-    return any(variant in normalized for variant in query_variants)
+    return sorted(v for v in variants if v and len(v) >= 2)
 
 
 def make_fragment(text: str, query_variants: List[str], radius: int = 90) -> str:
@@ -93,7 +181,7 @@ def make_fragment(text: str, query_variants: List[str], radius: int = 90) -> str
     found_index = -1
     found_variant = ""
 
-    for variant in query_variants:
+    for variant in sorted(query_variants, key=len, reverse=True):
         idx = normalized_search.find(variant)
         if idx != -1:
             found_index = idx
@@ -101,12 +189,113 @@ def make_fragment(text: str, query_variants: List[str], radius: int = 90) -> str
             break
 
     if found_index == -1:
-        return normalized_original[:220].strip()
+        return normalized_search[:220].strip()
 
     start = max(0, found_index - radius)
     end = min(len(normalized_search), found_index + len(found_variant) + radius)
 
-    return normalized_search[start:end].strip()
+    fragment = normalized_search[start:end].strip()
+    if start > 0:
+        fragment = "..." + fragment
+    if end < len(normalized_search):
+        fragment = fragment + "..."
+
+    return fragment
+
+
+def get_fuzzy_score(query: str, text: str) -> int:
+    q = normalize_text(query)
+    normalized_text = normalize_text(text)
+
+    if not q or not normalized_text:
+        return 0
+
+    q_tokens = tokenize(q)
+    text_tokens = tokenize(normalized_text)
+
+    if not q_tokens or not text_tokens:
+        return 0
+
+    if fuzz is not None:
+        token_scores = []
+        for q_token in q_tokens:
+            if len(q_token) < 4:
+                continue
+            best_token_score = max(fuzz.ratio(q_token, t) for t in text_tokens)
+            token_scores.append(best_token_score)
+
+        avg_token_score = int(sum(token_scores) / len(token_scores)) if token_scores else 0
+
+        if len(q_tokens) > 1:
+            n = min(len(q_tokens) + 1, 6)
+            grams = [" ".join(text_tokens[i:i + n]) for i in range(0, max(1, len(text_tokens) - n + 1))]
+            phrase_score = max([fuzz.token_set_ratio(q, gram) for gram in grams] or [0])
+            return int(max(avg_token_score, phrase_score))
+
+        return avg_token_score
+
+    from difflib import SequenceMatcher
+
+    scores = []
+    for q_token in q_tokens:
+        if len(q_token) < 4:
+            continue
+        scores.append(max(int(SequenceMatcher(None, q_token, t).ratio() * 100) for t in text_tokens))
+
+    return int(sum(scores) / len(scores)) if scores else 0
+
+
+def find_analytics_match(
+    text: str,
+    query: str,
+    query_variants: List[str],
+) -> Optional[Dict[str, Any]]:
+    normalized_text = normalize_text(text)
+    normalized_query = normalize_text(query)
+
+    if not normalized_text or not normalized_query:
+        return None
+
+    if normalized_query in normalized_text:
+        return {
+            "match_type": "exact",
+            "score": 100,
+            "fragment": make_fragment(text, [normalized_query]),
+        }
+
+    for variant in sorted(query_variants, key=len, reverse=True):
+        if len(variant) >= 3 and variant in normalized_text:
+            return {
+                "match_type": "semantic_or_morphology",
+                "score": 92,
+                "fragment": make_fragment(text, [variant]),
+            }
+
+    query_stems = {simple_stem(token) for token in tokenize(normalized_query) if len(token) >= 4}
+    text_stems = {simple_stem(token) for token in tokenize(normalized_text) if len(token) >= 4}
+
+    if query_stems and query_stems.issubset(text_stems):
+        return {
+            "match_type": "stem",
+            "score": 88,
+            "fragment": make_fragment(text, list(query_stems) or query_variants),
+        }
+
+    fuzzy_score = get_fuzzy_score(normalized_query, normalized_text)
+    if fuzzy_score >= 84:
+        return {
+            "match_type": "fuzzy",
+            "score": fuzzy_score,
+            "fragment": make_fragment(text, query_variants),
+        }
+
+    return None
+
+
+def text_has_query(text: str, query_variants: List[str]) -> bool:
+    # Оставлено для совместимости со старой логикой.
+    query = query_variants[0] if query_variants else ""
+    return find_analytics_match(text, query, query_variants) is not None
 
 
 def get_profile_search_text(profile: Dict[str, Any]) -> str:
@@ -241,8 +430,9 @@ def add_analytics_match(
 def check_docx_profile_match(
     doc: Document,
     student: Student,
+    query: str,
     query_variants: List[str],
-) -> Optional[str]:
+) -> Optional[Dict[str, Any]]:
     parsed_doc = open_docx(doc.filepath)
     if not parsed_doc:
         return None
@@ -250,22 +440,16 @@ def check_docx_profile_match(
     profile = build_student_profile_from_docx(parsed_doc, student.full_name)
     profile_text = get_profile_search_text(profile)
 
-    if profile_text and text_has_query(profile_text, query_variants):
-        return make_fragment(profile_text, query_variants)
-
-    return None
+    return find_analytics_match(profile_text, query, query_variants)
 
 
 def check_personal_document_match(
     doc: Document,
+    query: str,
     query_variants: List[str],
-) -> Optional[str]:
+) -> Optional[Dict[str, Any]]:
     text = doc.text_content or ""
-
-    if text_has_query(text, query_variants):
-        return make_fragment(text, query_variants)
-
-    return None
+    return find_analytics_match(text, query, query_variants)
 
 
 @router.get("/student")
@@ -362,25 +546,29 @@ def search_analytics(
                 # Иначе одно совпадение из общей таблицы засчитывается всем студентам.
                 # Общий DOCX засчитывается только если запрос найден в конкретной строке/профиле студента.
                 if doc.file_type == "docx":
-                    matched_fragment = check_docx_profile_match(
+                    match = check_docx_profile_match(
                         doc=doc,
                         student=student,
+                        query=q,
                         query_variants=query_variants,
                     )
 
-                    if matched_fragment:
-                        match_source = "docx_student_row"
+                    if match:
+                        matched_fragment = match["fragment"]
+                        match_source = f"docx_student_row_{match['match_type']}_{match['score']}"
 
                 # Для общих PDF/TXT пока не засчитываем аналитику автоматически,
                 # потому что без структуры строки студента легко получить ложную статистику.
             else:
-                matched_fragment = check_personal_document_match(
+                match = check_personal_document_match(
                     doc=doc,
+                    query=q,
                     query_variants=query_variants,
                 )
 
-                if matched_fragment:
-                    match_source = "personal_document"
+                if match:
+                    matched_fragment = match["fragment"]
+                    match_source = f"personal_document_{match['match_type']}_{match['score']}"
 
             if matched_fragment:
                 add_analytics_match(

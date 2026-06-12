@@ -182,6 +182,65 @@ def serialize_document_student(student: Student, match_source: str):
     }
 
 
+def user_can_see_unassigned_document(db: Session, user: User, doc: Document, ai: Optional[AIResult]) -> bool:
+    if user.role in ["admin", "manager", "head"]:
+        return True
+
+    if user.role != "teacher":
+        return False
+
+    user_group_ids = get_user_group_ids(db, user.id)
+    doc_group_ids = get_document_group_ids(db, doc.id)
+    detected_group_id = None
+
+    if ai and ai.entities_json:
+        try:
+            entities = json.loads(ai.entities_json or "{}")
+            detected_group_name = entities.get("group_name")
+            detected_group = get_group_by_ai_name(db, detected_group_name)
+            if detected_group:
+                detected_group_id = detected_group.id
+        except Exception:
+            detected_group_id = None
+
+    if doc_group_ids:
+        return bool(doc_group_ids.intersection(user_group_ids))
+
+    if detected_group_id:
+        return detected_group_id in user_group_ids
+
+    # Если AI не смог определить группу, преподавателю такой документ не показываем.
+    return False
+
+
+def get_visible_unassigned_documents(db: Session, user: User) -> List[dict]:
+    docs = db.query(Document).filter(
+        Document.status == "unassigned"
+    ).order_by(Document.id.desc()).all()
+
+    result = []
+
+    for d in docs:
+        ai = db.query(AIResult).filter(AIResult.document_id == d.id).first()
+
+        if not user_can_see_unassigned_document(db, user, d, ai):
+            continue
+
+        result.append({
+            "id": d.id,
+            "filename": d.filename,
+            "display_name": d.display_name,
+            "effective_name": d.display_name or d.filename,
+            "file_type": d.file_type,
+            "status": d.status,
+            "uploaded_at": str(d.uploaded_at),
+            "text_preview": (d.text_content or "")[:300],
+            "entities_json": ai.entities_json if ai else None,
+        })
+
+    return result
+
+
 @router.post("/upload")
 def upload_document(
     file: UploadFile = File(...),
@@ -349,6 +408,19 @@ def update_document_title(
     }
 
 
+@router.get("/unassigned/count")
+def count_unassigned_documents(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role not in ["admin", "manager", "head", "teacher"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return {
+        "count": len(get_visible_unassigned_documents(db, user))
+    }
+
+
 @router.get("/unassigned")
 def list_unassigned_documents(
     db: Session = Depends(get_db),
@@ -357,50 +429,7 @@ def list_unassigned_documents(
     if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    docs = db.query(Document).filter(
-        Document.status == "unassigned"
-    ).order_by(Document.id.desc()).all()
-
-    result = []
-    user_group_ids = get_user_group_ids(db, user.id) if user.role == "teacher" else set()
-
-    for d in docs:
-        ai = db.query(AIResult).filter(AIResult.document_id == d.id).first()
-
-        if user.role == "teacher":
-            doc_group_ids = get_document_group_ids(db, d.id)
-            detected_group_id = None
-
-            if ai and ai.entities_json:
-                try:
-                    entities = json.loads(ai.entities_json or "{}")
-                    detected_group_name = entities.get("group_name")
-                    detected_group = get_group_by_ai_name(db, detected_group_name)
-                    if detected_group:
-                        detected_group_id = detected_group.id
-                except Exception:
-                    detected_group_id = None
-
-            if doc_group_ids:
-                if not doc_group_ids.intersection(user_group_ids):
-                    continue
-            elif detected_group_id:
-                if detected_group_id not in user_group_ids:
-                    continue
-
-        result.append({
-            "id": d.id,
-            "filename": d.filename,
-            "display_name": d.display_name,
-            "effective_name": d.display_name or d.filename,
-            "file_type": d.file_type,
-            "status": d.status,
-            "uploaded_at": str(d.uploaded_at),
-            "text_preview": (d.text_content or "")[:300],
-            "entities_json": ai.entities_json if ai else None,
-        })
-
-    return result
+    return get_visible_unassigned_documents(db, user)
 
 
 @router.post("/{doc_id}/assign")
