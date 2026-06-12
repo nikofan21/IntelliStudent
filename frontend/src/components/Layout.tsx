@@ -8,9 +8,22 @@ type NavItem = {
   to: string;
   label: string;
   icon: ReactNode;
-  adminOnly?: boolean;
   roles?: string[];
 };
+
+function getRoleTitle(role: string | null) {
+  if (role === "admin") return "Администратор";
+  if (role === "manager") return "Руководство";
+  if (role === "head") return "Заведующий";
+  return "Преподаватель";
+}
+
+function getRoleIcon(role: string | null) {
+  if (role === "admin") return "🛡️";
+  if (role === "manager") return "🏢";
+  if (role === "head") return "🎓";
+  return "👤";
+}
 
 export default function Layout() {
   const location = useLocation();
@@ -34,15 +47,13 @@ export default function Layout() {
 
     try {
       const meRes = await api.get("/auth/me", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const actualRole = meRes.data?.role || "teacher";
       setRole(actualRole);
       setLocalRole(actualRole);
-    } catch (e) {
+    } catch {
       clearToken();
       navigate("/login", { replace: true });
       return;
@@ -60,18 +71,17 @@ export default function Layout() {
       to: "/unassigned-documents",
       label: "Непривязанные",
       icon: <span>📄</span>,
-      roles: ["admin", "teacher"],
+      roles: ["admin", "manager", "head", "teacher"],
     },
     {
       to: "/admin/documents",
       label: "Админ",
       icon: <span>🗂️</span>,
-      adminOnly: true,
+      roles: ["admin", "manager"],
     },
   ];
 
   const filteredItems = navItems.filter((item) => {
-    if (item.adminOnly && role !== "admin") return false;
     if (item.roles && (!role || !item.roles.includes(role))) return false;
     return true;
   });
@@ -81,9 +91,7 @@ export default function Layout() {
     navigate("/login", { replace: true });
   };
 
-  const isActive = (path: string) => {
-    return location.pathname === path;
-  };
+  const isActive = (path: string) => location.pathname === path;
 
   if (checkingAuth) {
     return (
@@ -100,15 +108,12 @@ export default function Layout() {
     );
   }
 
-  if (!getToken()) {
-    return null;
-  }
+  if (!getToken()) return null;
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div>
-          {/* 🔥 LOGO */}
           <div className="brand">
             <div className="brand-logo">
               <img src="/logo.png" alt="IntelliStudent" />
@@ -138,17 +143,9 @@ export default function Layout() {
 
         <div className="sidebar-footer">
           <div className="user-box">
-            <div className="user-avatar">
-              {role === "admin" ? "🛡️" : role === "head" ? "🎓" : "👤"}
-            </div>
+            <div className="user-avatar">{getRoleIcon(role)}</div>
             <div>
-              <div className="user-role-title">
-                {role === "admin"
-                  ? "Администратор"
-                  : role === "head"
-                  ? "Заведующий"
-                  : "Преподаватель"}
-              </div>
+              <div className="user-role-title">{getRoleTitle(role)}</div>
               <div className="user-role-subtitle">Авторизованный доступ</div>
             </div>
           </div>

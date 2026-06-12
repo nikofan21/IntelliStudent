@@ -35,7 +35,7 @@ def get_user_department_ids(db: Session, user: User) -> Set[int]:
 
 
 def check_group_access(db: Session, user: User, group: Group) -> None:
-    if user.role == "admin":
+    if user.role in ["admin", "manager"]:
         return
 
     if user.role == "head":
@@ -58,7 +58,7 @@ def resolve_department_id_for_group_create(
     user: User,
     payload_department_id: int | None,
 ) -> int | None:
-    if user.role == "admin":
+    if user.role in ["admin", "manager"]:
         if payload_department_id is None:
             return None
 
@@ -165,10 +165,10 @@ def create_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head"]:
+    if user.role not in ["admin", "manager", "head"]:
         raise HTTPException(
             status_code=403,
-            detail="Только admin или head могут создавать группы",
+            detail="Только admin, manager или head могут создавать группы",
         )
 
     data = normalize_group_data(
@@ -222,7 +222,7 @@ def list_groups(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     query = db.query(Group)
@@ -263,7 +263,7 @@ def get_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     group = db.query(Group).filter(Group.id == group_id).first()
@@ -282,7 +282,7 @@ def update_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head"]:
+    if user.role not in ["admin", "manager", "head"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     group = db.query(Group).filter(Group.id == group_id).first()
@@ -299,7 +299,7 @@ def update_group(
         is_active=payload.is_active,
     )
 
-    if user.role == "admin":
+    if user.role in ["admin", "manager"]:
         if payload.department_id is not None:
             department = db.query(Department).filter(
                 Department.id == payload.department_id
@@ -365,7 +365,7 @@ def promote_groups(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head"]:
+    if user.role not in ["admin", "manager", "head"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not payload.group_ids:
@@ -478,10 +478,10 @@ def archive_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role != "admin":
+    if user.role not in ["admin", "manager"]:
         raise HTTPException(
             status_code=403,
-            detail="Только admin может архивировать группы",
+            detail="Только admin или manager может архивировать группы",
         )
 
     group = db.query(Group).filter(Group.id == group_id).first()
@@ -510,10 +510,10 @@ def restore_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role != "admin":
+    if user.role not in ["admin", "manager"]:
         raise HTTPException(
             status_code=403,
-            detail="Только admin может восстанавливать группы",
+            detail="Только admin или manager может восстанавливать группы",
         )
 
     group = db.query(Group).filter(Group.id == group_id).first()

@@ -44,7 +44,7 @@ type DepartmentItem = {
   created_at?: string | null;
 };
 
-type UserRole = "teacher" | "head" | "admin";
+type UserRole = "teacher" | "head" | "manager" | "admin";
 
 type UserItem = {
   id: number;
@@ -148,6 +148,8 @@ export default function AdminDocuments() {
 
   const [newLogin, setNewLogin] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [newRole, setNewRole] = useState<UserRole>("teacher");
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
   const [selectedDepartments, setSelectedDepartments] = useState<number[]>([]);
@@ -159,6 +161,8 @@ export default function AdminDocuments() {
   const [editLogin, setEditLogin] = useState("");
   const [editRole, setEditRole] = useState<UserRole>("teacher");
   const [editPassword, setEditPassword] = useState("");
+  const [editPasswordConfirm, setEditPasswordConfirm] = useState("");
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editGroups, setEditGroups] = useState<number[]>([]);
   const [editDepartments, setEditDepartments] = useState<number[]>([]);
 
@@ -361,7 +365,7 @@ export default function AdminDocuments() {
   }, []);
 
   useEffect(() => {
-    if (meLoaded && me?.role === "admin") {
+    if (meLoaded && (me?.role === "admin" || me?.role === "manager")) {
       loadDocs();
       loadUsers();
       loadGroups();
@@ -424,8 +428,18 @@ export default function AdminDocuments() {
   async function createUser() {
     clearMessage();
 
-    if (!newLogin.trim() || !newPassword.trim()) {
-      showError("Заполни логин и пароль");
+    if (!newLogin.trim() || !newPassword.trim() || !newPasswordConfirm.trim()) {
+      showError("Заполни логин, пароль и подтверждение пароля");
+      return;
+    }
+
+    if (newPassword !== newPasswordConfirm) {
+      showError("Пароли не совпадают");
+      return;
+    }
+
+    if (me?.role === "manager" && newRole === "admin") {
+      showError("Руководство не может создавать администратора");
       return;
     }
 
@@ -452,6 +466,7 @@ export default function AdminDocuments() {
 
       setNewLogin("");
       setNewPassword("");
+      setNewPasswordConfirm("");
       setNewRole("teacher");
       setSelectedGroups([]);
       setSelectedDepartments([]);
@@ -466,6 +481,11 @@ export default function AdminDocuments() {
   }
 
   async function deleteUser(userId: number, login: string) {
+    if (me?.role !== "admin") {
+      showError("Удалять пользователей может только администратор");
+      return;
+    }
+
     openConfirmModal({
       title: "Удаление пользователя",
       description: `Удалить пользователя ${login}?`,
@@ -511,6 +531,7 @@ export default function AdminDocuments() {
     setEditLogin("");
     setEditRole("teacher");
     setEditPassword("");
+    setEditPasswordConfirm("");
     setEditGroups([]);
     setEditDepartments([]);
   }
@@ -559,6 +580,23 @@ export default function AdminDocuments() {
       return;
     }
 
+    if (me?.role === "manager" && editRole === "admin") {
+      showError("Руководство не может назначать роль администратора");
+      return;
+    }
+
+    if (me?.role === "manager" && editPassword.trim()) {
+      showError("Руководство не может менять пароли пользователей");
+      return;
+    }
+
+    if (editPassword.trim() || editPasswordConfirm.trim()) {
+      if (editPassword !== editPasswordConfirm) {
+        showError("Пароли не совпадают");
+        return;
+      }
+    }
+
     if (editRole === "teacher" && editGroups.length === 0) {
       showError("Для teacher нужно выбрать хотя бы одну группу");
       return;
@@ -569,25 +607,40 @@ export default function AdminDocuments() {
       return;
     }
 
-    try {
-      setSavingUserId(userId);
+    const doSave = async () => {
+      try {
+        setSavingUserId(userId);
 
-      await api.put(`/auth/users/${userId}`, {
-        login: editLogin.trim(),
-        role: editRole,
-        password: editPassword.trim() ? editPassword : undefined,
-        group_ids: editRole === "teacher" ? editGroups : [],
-        department_ids: editRole === "head" ? editDepartments : [],
+        await api.put(`/auth/users/${userId}`, {
+          login: editLogin.trim(),
+          role: editRole,
+          password: editPassword.trim() ? editPassword : undefined,
+          group_ids: editRole === "teacher" ? editGroups : [],
+          department_ids: editRole === "head" ? editDepartments : [],
+        });
+
+        cancelEdit();
+        await loadUsers();
+        showSuccess("Пользователь обновлён");
+      } catch (e: any) {
+        showError(e?.response?.data?.detail || "Ошибка обновления пользователя");
+      } finally {
+        setSavingUserId(null);
+      }
+    };
+
+    if (editPassword.trim()) {
+      openConfirmModal({
+        title: "Смена пароля",
+        description: `Вы действительно хотите изменить пароль пользователя ${editLogin.trim()}?`,
+        confirmText: "Да, изменить",
+        danger: true,
+        onConfirm: doSave,
       });
-
-      cancelEdit();
-      await loadUsers();
-      showSuccess("Пользователь обновлён");
-    } catch (e: any) {
-      showError(e?.response?.data?.detail || "Ошибка обновления пользователя");
-    } finally {
-      setSavingUserId(null);
+      return;
     }
+
+    await doSave();
   }
 
   async function createDepartment() {
@@ -662,7 +715,7 @@ export default function AdminDocuments() {
 
   if (!meLoaded) return <div className="page-subtitle">Проверка доступа...</div>;
 
-  if (me?.role !== "admin") {
+  if (me?.role !== "admin" && me?.role !== "manager") {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -1007,12 +1060,32 @@ export default function AdminDocuments() {
 
               <div>
                 <label className="label">Пароль</label>
+                <div className="row" style={{ gap: 8 }}>
+                  <input
+                    className="input"
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Введите пароль"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                  >
+                    {showNewPassword ? "🙈" : "👁"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Подтвердите пароль</label>
                 <input
                   className="input"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Введите пароль"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPasswordConfirm}
+                  onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                  placeholder="Повторите пароль"
                 />
               </div>
 
@@ -1026,7 +1099,8 @@ export default function AdminDocuments() {
                 >
                   <option value="teacher">teacher</option>
                   <option value="head">head</option>
-                  <option value="admin">admin</option>
+                  <option value="manager">manager</option>
+                  {me?.role === "admin" && <option value="admin">admin</option>}
                 </select>
               </div>
             </div>
@@ -1157,19 +1231,23 @@ export default function AdminDocuments() {
                       </div>
 
                       <div className="row">
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => startEdit(u)}
-                        >
-                          Редактировать
-                        </button>
+                        {!(me?.role === "manager" && u.role === "admin") && (
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => startEdit(u)}
+                          >
+                            Редактировать
+                          </button>
+                        )}
 
-                        <button
-                          className="btn btn-danger"
-                          onClick={() => deleteUser(u.id, u.login)}
-                        >
-                          Удалить
-                        </button>
+                        {me?.role === "admin" && (
+                          <button
+                            className="btn btn-danger"
+                            onClick={() => deleteUser(u.id, u.login)}
+                          >
+                            Удалить
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1196,21 +1274,46 @@ export default function AdminDocuments() {
                             >
                               <option value="teacher">teacher</option>
                               <option value="head">head</option>
-                              <option value="admin">admin</option>
+                              <option value="manager">manager</option>
+                              {me?.role === "admin" && <option value="admin">admin</option>}
                             </select>
                           </div>
 
-                          <div>
-                            <label className="label">Новый пароль</label>
+                          {me?.role === "admin" && (
+                            <div>
+                              <label className="label">Новый пароль</label>
+                              <div className="row" style={{ gap: 8 }}>
+                                <input
+                                  className="input"
+                                  type={showEditPassword ? "text" : "password"}
+                                  value={editPassword}
+                                  onChange={(e) => setEditPassword(e.target.value)}
+                                  placeholder="Оставь пустым, если не менять"
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={() => setShowEditPassword((v) => !v)}
+                                >
+                                  {showEditPassword ? "🙈" : "👁"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {me?.role === "admin" && (
+                          <div style={{ marginTop: 16 }}>
+                            <label className="label">Подтвердите новый пароль</label>
                             <input
                               className="input"
-                              type="password"
-                              value={editPassword}
-                              onChange={(e) => setEditPassword(e.target.value)}
-                              placeholder="Оставь пустым, если не менять"
+                              type={showEditPassword ? "text" : "password"}
+                              value={editPasswordConfirm}
+                              onChange={(e) => setEditPasswordConfirm(e.target.value)}
+                              placeholder="Повторите новый пароль"
                             />
                           </div>
-                        </div>
+                        )}
 
                         {editRole === "teacher" && (
                           <div style={{ marginTop: 16 }}>
@@ -1396,12 +1499,14 @@ export default function AdminDocuments() {
                       )}
                     </div>
 
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => deleteDepartment(d.id, d.name)}
-                    >
-                      Удалить
-                    </button>
+                    {me?.role === "admin" && (
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => deleteDepartment(d.id, d.name)}
+                      >
+                        Удалить
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

@@ -21,7 +21,7 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "teacher"]:
+    if user.role not in ["admin", "manager", "teacher", "head"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     total_students = db.query(Student).count()

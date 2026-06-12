@@ -56,8 +56,8 @@ def create_department(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admin can create departments")
+    if user.role not in ["admin", "manager"]:
+        raise HTTPException(status_code=403, detail="Only admin or manager can create departments")
 
     name = payload.name.strip()
     if not name:
@@ -85,7 +85,7 @@ def list_departments(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     query = db.query(Department)
@@ -132,8 +132,8 @@ def update_department(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admin")
+    if user.role not in ["admin", "manager"]:
+        raise HTTPException(status_code=403, detail="Only admin or manager")
 
     dep = db.query(Department).filter(Department.id == department_id).first()
     if not dep:
@@ -192,8 +192,8 @@ def assign_departments_to_user(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admin")
+    if user.role not in ["admin", "manager"]:
+        raise HTTPException(status_code=403, detail="Only admin or manager")
 
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:

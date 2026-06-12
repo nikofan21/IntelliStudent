@@ -37,7 +37,7 @@ def get_user_group_ids(db: Session, user_id: int) -> Set[int]:
 
 
 def check_group_access(user: User, group: Group, allowed_group_ids: Set[int], allowed_department_ids: Set[int]):
-    if user.role == "admin":
+    if user.role in ["admin", "manager"]:
         return
 
     if user.role == "head":
@@ -81,7 +81,7 @@ def create_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     group = db.query(Group).filter(Group.id == payload.group_id).first()
@@ -120,7 +120,7 @@ def list_students(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     query = db.query(Student)
@@ -156,7 +156,7 @@ def get_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     student = db.query(Student).filter(Student.id == student_id).first()
@@ -178,7 +178,7 @@ def update_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     student = db.query(Student).filter(Student.id == student_id).first()
@@ -219,7 +219,7 @@ def delete_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     student = db.query(Student).filter(Student.id == student_id).first()

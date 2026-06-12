@@ -53,7 +53,7 @@ def get_user_group_ids(db: Session, user_id: int) -> Set[int]:
 
 
 def check_group_access(db: Session, user: User, group_id: int) -> None:
-    if user.role in ["admin", "head"]:
+    if user.role in ["admin", "manager", "head"]:
         return
 
     if user.role != "teacher":
@@ -99,7 +99,7 @@ def get_group_by_ai_name(db: Session, detected_group_name: Optional[str]) -> Opt
 
 
 def check_document_access(db: Session, user: User, doc: Document) -> None:
-    if user.role in ["admin", "head"]:
+    if user.role in ["admin", "manager", "head"]:
         return
 
     if user.role != "teacher":
@@ -190,7 +190,7 @@ def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     chosen_students = []
@@ -326,7 +326,7 @@ def update_document_title(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -354,7 +354,7 @@ def list_unassigned_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     docs = db.query(Document).filter(
@@ -410,7 +410,7 @@ def assign_document_to_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -456,7 +456,7 @@ def assign_document_to_many_students(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -522,7 +522,7 @@ def assign_document_to_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -581,7 +581,7 @@ def get_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     check_document_access(db, user, doc)
@@ -618,7 +618,7 @@ def get_student_profile_from_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -669,7 +669,7 @@ def download_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     check_document_access(db, user, doc)
@@ -687,7 +687,7 @@ def unlink_document_from_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -741,7 +741,7 @@ def delete_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -776,7 +776,7 @@ def get_all_documents_admin(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head"]:
+    if user.role not in ["admin", "manager", "head"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     docs = db.query(Document).order_by(Document.id.desc()).all()

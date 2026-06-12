@@ -185,7 +185,7 @@ def serialize_student_with_documents(db: Session, student: Student):
 
 
 def user_can_access_group(db: Session, user: User, group: Group) -> bool:
-    if user.role == "admin":
+    if user.role in ["admin", "manager"]:
         return True
 
     if user.role == "teacher":
@@ -275,7 +275,7 @@ def search_student(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     g = db.query(Group).filter(Group.id == group_id).first()
@@ -311,7 +311,7 @@ def search_analytics(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not q.strip():
@@ -400,7 +400,7 @@ def search_student_by_group_name(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in ["admin", "head", "teacher"]:
+    if user.role not in ["admin", "manager", "head", "teacher"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
     group_name = group.strip()

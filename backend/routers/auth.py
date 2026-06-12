@@ -12,12 +12,12 @@ from ..auth.security import (
     verify_password,
     create_access_token,
     get_current_user,
-    require_role,
 )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-ALLOWED_ROLES = {"admin", "teacher", "head"}
+ALLOWED_ROLES = {"admin", "manager", "teacher", "head"}
+ADMIN_ROLES = {"admin", "manager"}
 
 
 def get_db():
@@ -48,6 +48,44 @@ def normalize_role(role: str) -> str:
     return role.strip().lower()
 
 
+def assert_admin_panel_access(user: User) -> None:
+    if user.role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+def assert_manager_can_set_role(actor: User, target_role: str) -> None:
+    """
+    admin может назначать любые роли.
+    manager — управленческая роль: может создавать/редактировать пользователей,
+    но не может создавать/назначать admin и не может менять пароли существующих пользователей.
+    """
+    if actor.role == "admin":
+        return
+
+    if actor.role != "manager":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if target_role == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Manager cannot create or assign admin role",
+        )
+
+
+def assert_manager_can_edit_target(actor: User, target_user: User) -> None:
+    if actor.role == "admin":
+        return
+
+    if actor.role != "manager":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if target_user.role == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Manager cannot edit admin users",
+        )
+
+
 def get_group_ids_for_user(db: Session, user_id: int) -> List[int]:
     links = db.query(UserGroup).filter(UserGroup.user_id == user_id).all()
     return [link.group_id for link in links]
@@ -68,10 +106,7 @@ def validate_group_ids(db: Session, group_ids: List[int]) -> List[int]:
 
     missing = [gid for gid in unique_ids if gid not in existing_ids]
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Groups not found: {missing}",
-        )
+        raise HTTPException(status_code=400, detail=f"Groups not found: {missing}")
 
     return unique_ids
 
@@ -86,32 +121,52 @@ def validate_department_ids(db: Session, department_ids: List[int]) -> List[int]
 
     missing = [did for did in unique_ids if did not in existing_ids]
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Departments not found: {missing}",
-        )
+        raise HTTPException(status_code=400, detail=f"Departments not found: {missing}")
 
     return unique_ids
 
 
 def replace_user_groups(db: Session, user_id: int, group_ids: List[int]) -> None:
     db.query(UserGroup).filter(UserGroup.user_id == user_id).delete()
-
     for gid in group_ids:
         db.add(UserGroup(user_id=user_id, group_id=gid))
 
 
 def replace_user_departments(db: Session, user_id: int, department_ids: List[int]) -> None:
     db.query(UserDepartment).filter(UserDepartment.user_id == user_id).delete()
-
     for did in department_ids:
         db.add(UserDepartment(user_id=user_id, department_id=did))
+
+
+def apply_role_links(db: Session, user_id: int, role: str, group_ids: List[int], department_ids: List[int]) -> None:
+    if role == "teacher":
+        replace_user_groups(db, user_id, group_ids)
+        replace_user_departments(db, user_id, [])
+    elif role == "head":
+        replace_user_groups(db, user_id, [])
+        replace_user_departments(db, user_id, department_ids)
+    else:
+        replace_user_groups(db, user_id, [])
+        replace_user_departments(db, user_id, [])
+
+
+def validate_role_payload(role: str, group_ids: List[int], department_ids: List[int]) -> None:
+    if role not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role. Allowed roles: {', '.join(sorted(ALLOWED_ROLES))}",
+        )
+
+    if role == "teacher" and not group_ids:
+        raise HTTPException(status_code=400, detail="Teacher must have at least one assigned group")
+
+    if role == "head" and not department_ids:
+        raise HTTPException(status_code=400, detail="Head must have at least one assigned department")
 
 
 def get_groups_for_user(db: Session, group_ids: List[int]):
     if not group_ids:
         return []
-
     group_rows = db.query(Group).filter(Group.id.in_(group_ids)).all()
     return [{"id": g.id, "name": g.name} for g in group_rows]
 
@@ -119,17 +174,34 @@ def get_groups_for_user(db: Session, group_ids: List[int]):
 def get_departments_for_user(db: Session, department_ids: List[int]):
     if not department_ids:
         return []
-
     department_rows = db.query(Department).filter(Department.id.in_(department_ids)).all()
     return [{"id": d.id, "name": d.name} for d in department_rows]
+
+
+def serialize_user(db: Session, user: User):
+    group_ids = get_group_ids_for_user(db, user.id)
+    department_ids = get_department_ids_for_user(db, user.id)
+
+    return {
+        "id": user.id,
+        "login": user.login,
+        "role": user.role,
+        "group_ids": group_ids,
+        "groups": get_groups_for_user(db, group_ids),
+        "department_ids": department_ids,
+        "departments": get_departments_for_user(db, department_ids),
+        "created_at": str(user.created_at) if user.created_at else None,
+    }
 
 
 @router.post("/register")
 def register(
     payload: RegisterRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_role("admin")),
+    actor: User = Depends(get_current_user),
 ):
+    assert_admin_panel_access(actor)
+
     login = payload.login.strip()
     password = payload.password
     role = normalize_role(payload.role)
@@ -140,89 +212,35 @@ def register(
     if not login:
         raise HTTPException(status_code=400, detail="Login cannot be empty")
 
-    if role not in ALLOWED_ROLES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid role. Allowed roles: {', '.join(sorted(ALLOWED_ROLES))}"
-        )
-
-    if role == "teacher" and not group_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Teacher must have at least one assigned group"
-        )
-
-    if role == "head" and not department_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Head must have at least one assigned department"
-        )
+    validate_role_payload(role, group_ids, department_ids)
+    assert_manager_can_set_role(actor, role)
 
     existing_user = db.query(User).filter(User.login == login).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="User already exists")
 
-    user = User(
-        login=login,
-        password_hash=get_password_hash(password),
-        role=role,
-    )
-
+    user = User(login=login, password_hash=get_password_hash(password), role=role)
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    if role == "teacher":
-        replace_user_groups(db, user.id, group_ids)
-        replace_user_departments(db, user.id, [])
-
-    elif role == "head":
-        replace_user_groups(db, user.id, [])
-        replace_user_departments(db, user.id, department_ids)
-
-    else:
-        replace_user_groups(db, user.id, [])
-        replace_user_departments(db, user.id, [])
-
+    apply_role_links(db, user.id, role, group_ids, department_ids)
     db.commit()
 
-    return {
-        "message": "User created",
-        "id": user.id,
-        "login": user.login,
-        "role": user.role,
-        "group_ids": get_group_ids_for_user(db, user.id),
-        "groups": get_groups_for_user(db, get_group_ids_for_user(db, user.id)),
-        "department_ids": get_department_ids_for_user(db, user.id),
-        "departments": get_departments_for_user(db, get_department_ids_for_user(db, user.id)),
-        "created_by": admin_user.login,
-    }
+    result = serialize_user(db, user)
+    result.update({"message": "User created", "created_by": actor.login})
+    return result
 
 
 @router.get("/users")
 def list_users(
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_role("admin")),
+    actor: User = Depends(get_current_user),
 ):
+    assert_admin_panel_access(actor)
+
     users = db.query(User).order_by(User.id.desc()).all()
-
-    result = []
-    for user in users:
-        group_ids = get_group_ids_for_user(db, user.id)
-        department_ids = get_department_ids_for_user(db, user.id)
-
-        result.append({
-            "id": user.id,
-            "login": user.login,
-            "role": user.role,
-            "group_ids": group_ids,
-            "groups": get_groups_for_user(db, group_ids),
-            "department_ids": department_ids,
-            "departments": get_departments_for_user(db, department_ids),
-            "created_at": str(user.created_at) if user.created_at else None,
-        })
-
-    return result
+    return [serialize_user(db, user) for user in users]
 
 
 @router.put("/users/{user_id}")
@@ -230,11 +248,15 @@ def update_user(
     user_id: int,
     payload: UpdateUserRequest,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_role("admin")),
+    actor: User = Depends(get_current_user),
 ):
+    assert_admin_panel_access(actor)
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    assert_manager_can_edit_target(actor, user)
 
     login = payload.login.strip()
     role = normalize_role(payload.role)
@@ -245,27 +267,15 @@ def update_user(
     if not login:
         raise HTTPException(status_code=400, detail="Login cannot be empty")
 
-    if role not in ALLOWED_ROLES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid role. Allowed roles: {', '.join(sorted(ALLOWED_ROLES))}"
-        )
-
-    if role == "teacher" and not group_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Teacher must have at least one assigned group"
-        )
-
-    if role == "head" and not department_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Head must have at least one assigned department"
-        )
+    validate_role_payload(role, group_ids, department_ids)
+    assert_manager_can_set_role(actor, role)
 
     existing_user = db.query(User).filter(User.login == login, User.id != user_id).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Login already in use")
+
+    if actor.role == "manager" and payload.password:
+        raise HTTPException(status_code=403, detail="Manager cannot change passwords")
 
     user.login = login
     user.role = role
@@ -276,44 +286,28 @@ def update_user(
     db.commit()
     db.refresh(user)
 
-    if role == "teacher":
-        replace_user_groups(db, user.id, group_ids)
-        replace_user_departments(db, user.id, [])
-
-    elif role == "head":
-        replace_user_groups(db, user.id, [])
-        replace_user_departments(db, user.id, department_ids)
-
-    else:
-        replace_user_groups(db, user.id, [])
-        replace_user_departments(db, user.id, [])
-
+    apply_role_links(db, user.id, role, group_ids, department_ids)
     db.commit()
 
-    return {
-        "message": "User updated",
-        "id": user.id,
-        "login": user.login,
-        "role": user.role,
-        "group_ids": get_group_ids_for_user(db, user.id),
-        "groups": get_groups_for_user(db, get_group_ids_for_user(db, user.id)),
-        "department_ids": get_department_ids_for_user(db, user.id),
-        "departments": get_departments_for_user(db, get_department_ids_for_user(db, user.id)),
-        "updated_by": admin_user.login,
-    }
+    result = serialize_user(db, user)
+    result.update({"message": "User updated", "updated_by": actor.login})
+    return result
 
 
 @router.delete("/users/{user_id}")
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    admin_user: User = Depends(require_role("admin")),
+    actor: User = Depends(get_current_user),
 ):
+    if actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can delete users")
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if user.id == admin_user.id:
+    if user.id == actor.id:
         raise HTTPException(status_code=400, detail="You cannot delete yourself")
 
     db.query(UserGroup).filter(UserGroup.user_id == user.id).delete()
@@ -322,10 +316,7 @@ def delete_user(
     db.delete(user)
     db.commit()
 
-    return {
-        "message": "User deleted",
-        "user_id": user_id,
-    }
+    return {"message": "User deleted", "user_id": user_id}
 
 
 @router.post("/login")
@@ -333,10 +324,10 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    login = form_data.username.strip()
+    login_value = form_data.username.strip()
     password = form_data.password
 
-    user = db.query(User).filter(User.login == login).first()
+    user = db.query(User).filter(User.login == login_value).first()
 
     if not user or not verify_password(password, user.password_hash):
         raise HTTPException(
