@@ -1,0 +1,17 @@
+venv/
+venv312/
+
+node_modules/
+frontend/node_modules/
+
+storage/documents/
+storage/uploads/
+
+*.db
+*.sqlite
+*.sqlite3
+
+__pycache__/
+.env
+.vscode/
+.idea/
