@@ -9,6 +9,7 @@ type NavItem = {
   label: string;
   icon: ReactNode;
   roles?: string[];
+  hideWhenNoUnassigned?: boolean;
 };
 
 export default function Layout() {
@@ -17,10 +18,19 @@ export default function Layout() {
 
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [role, setLocalRole] = useState<string | null>(getRole());
+  const [unassignedCount, setUnassignedCount] = useState(0);
 
   useEffect(() => {
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    if (role && ["admin", "manager", "head", "teacher"].includes(role)) {
+      loadUnassignedCount();
+    } else {
+      setUnassignedCount(0);
+    }
+  }, [role]);
 
   async function checkAuth() {
     const token = getToken();
@@ -50,6 +60,15 @@ export default function Layout() {
     }
   }
 
+  async function loadUnassignedCount() {
+    try {
+      const res = await api.get("/documents/unassigned/count");
+      setUnassignedCount(Number(res.data?.count || 0));
+    } catch {
+      setUnassignedCount(0);
+    }
+  }
+
   const navItems: NavItem[] = [
     { to: "/dashboard", label: "Dashboard", icon: <span>🏠</span> },
     { to: "/students", label: "Студенты", icon: <span>👥</span> },
@@ -63,9 +82,10 @@ export default function Layout() {
     { to: "/upload", label: "Загрузка", icon: <span>⬆️</span> },
     {
       to: "/unassigned-documents",
-      label: "Непривязанные",
+      label: `Непривязанные (${unassignedCount})`,
       icon: <span>📄</span>,
-      roles: ["admin", "manager", "teacher"],
+      roles: ["admin", "manager", "head", "teacher"],
+      hideWhenNoUnassigned: true,
     },
     {
       to: "/admin/documents",
@@ -77,6 +97,7 @@ export default function Layout() {
 
   const filteredItems = navItems.filter((item) => {
     if (item.roles && (!role || !item.roles.includes(role))) return false;
+    if (item.hideWhenNoUnassigned && unassignedCount <= 0) return false;
     return true;
   });
 
