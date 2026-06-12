@@ -23,6 +23,8 @@ api.interceptors.request.use((config) => {
 /* ===================== */
 
 export interface Group {
+  department_id?: number | null;
+  department_name?: string | null;
   id: number;
   prefix: string;
   admission_year: number;

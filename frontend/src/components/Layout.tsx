@@ -11,20 +11,6 @@ type NavItem = {
   roles?: string[];
 };
 
-function getRoleTitle(role: string | null) {
-  if (role === "admin") return "Администратор";
-  if (role === "manager") return "Руководство";
-  if (role === "head") return "Заведующий";
-  return "Преподаватель";
-}
-
-function getRoleIcon(role: string | null) {
-  if (role === "admin") return "🛡️";
-  if (role === "manager") return "🏢";
-  if (role === "head") return "🎓";
-  return "👤";
-}
-
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -47,13 +33,15 @@ export default function Layout() {
 
     try {
       const meRes = await api.get("/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       const actualRole = meRes.data?.role || "teacher";
       setRole(actualRole);
       setLocalRole(actualRole);
-    } catch {
+    } catch (e) {
       clearToken();
       navigate("/login", { replace: true });
       return;
@@ -65,13 +53,19 @@ export default function Layout() {
   const navItems: NavItem[] = [
     { to: "/dashboard", label: "Dashboard", icon: <span>🏠</span> },
     { to: "/students", label: "Студенты", icon: <span>👥</span> },
+    {
+      to: "/archive-groups",
+      label: "Архив групп",
+      icon: <span>🗄️</span>,
+      roles: ["admin", "manager", "head"],
+    },
     { to: "/search", label: "Поиск", icon: <span>🔎</span> },
     { to: "/upload", label: "Загрузка", icon: <span>⬆️</span> },
     {
       to: "/unassigned-documents",
       label: "Непривязанные",
       icon: <span>📄</span>,
-      roles: ["admin", "manager", "head", "teacher"],
+      roles: ["admin", "manager", "teacher"],
     },
     {
       to: "/admin/documents",
@@ -91,7 +85,23 @@ export default function Layout() {
     navigate("/login", { replace: true });
   };
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => {
+    return location.pathname === path;
+  };
+
+  function getRoleTitle() {
+    if (role === "admin") return "Администратор";
+    if (role === "manager") return "Руководство";
+    if (role === "head") return "Заведующий";
+    return "Преподаватель";
+  }
+
+  function getRoleIcon() {
+    if (role === "admin") return "🛡️";
+    if (role === "manager") return "🏢";
+    if (role === "head") return "🎓";
+    return "👤";
+  }
 
   if (checkingAuth) {
     return (
@@ -108,7 +118,9 @@ export default function Layout() {
     );
   }
 
-  if (!getToken()) return null;
+  if (!getToken()) {
+    return null;
+  }
 
   return (
     <div className="app-shell">
@@ -143,9 +155,9 @@ export default function Layout() {
 
         <div className="sidebar-footer">
           <div className="user-box">
-            <div className="user-avatar">{getRoleIcon(role)}</div>
+            <div className="user-avatar">{getRoleIcon()}</div>
             <div>
-              <div className="user-role-title">{getRoleTitle(role)}</div>
+              <div className="user-role-title">{getRoleTitle()}</div>
               <div className="user-role-subtitle">Авторизованный доступ</div>
             </div>
           </div>

@@ -8,6 +8,7 @@ import SearchPage from "./pages/Search";
 import Dashboard from "./pages/Dashboard";
 import AdminDocuments from "./pages/AdminDocuments";
 import UnassignedDocuments from "./pages/UnassignedDocuments";
+import ArchiveGroups from "./pages/ArchiveGroups";
 
 import { getToken } from "./lib/auth";
 
@@ -37,6 +38,7 @@ export default function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="students" element={<Students />} />
+        <Route path="archive-groups" element={<ArchiveGroups />} />
         <Route path="upload" element={<Upload />} />
         <Route path="search" element={<SearchPage />} />
         <Route path="admin/documents" element={<AdminDocuments />} />

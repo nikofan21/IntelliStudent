@@ -81,8 +81,10 @@ export default function Students() {
     [selectedGroups]
   );
 
-  const canManageGroups = me?.role === "admin" || me?.role === "head";
+  const canManageGroups =
+    me?.role === "admin" || me?.role === "manager" || me?.role === "head";
   const isAdmin = me?.role === "admin";
+  const canArchiveOrRestoreGroups = me?.role === "admin" || me?.role === "manager";
   const canCreateStudents =
     me?.role === "admin" || me?.role === "teacher" || me?.role === "head";
 
@@ -543,7 +545,7 @@ export default function Students() {
 
                       <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                         {g.is_active ? (
-                          isAdmin ? (
+                          canArchiveOrRestoreGroups ? (
                             <button
                               type="button"
                               className="btn btn-secondary"
@@ -552,7 +554,7 @@ export default function Students() {
                               Архивировать
                             </button>
                           ) : null
-                        ) : isAdmin ? (
+                        ) : canArchiveOrRestoreGroups ? (
                           <button
                             type="button"
                             className="btn btn-secondary"
