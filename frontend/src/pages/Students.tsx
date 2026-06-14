@@ -113,8 +113,8 @@ export default function Students() {
     try {
       const [meRes, gRes, stRes] = await Promise.all([
         api.get("/auth/me"),
-        api.get("/groups", { params: { include_inactive: true } }),
-        api.get("/students"),
+        api.get("/groups/", { params: { include_inactive: true } }),
+        api.get("/students/"),
       ]);
 
       setMe(meRes.data);
@@ -185,7 +185,7 @@ export default function Students() {
       return;
     }
 
-    await api.post("/groups", {
+    await api.post("/groups/", {
       prefix: prefix.trim(),
       admission_year: Number(year),
       course: Number(groupCourse),
@@ -224,7 +224,7 @@ export default function Students() {
         return;
       }
 
-      await api.post("/students", {
+      await api.post("/students/", {
         full_name: fullName.trim(),
         group_id: Number(groupId),
         email: email.trim(),

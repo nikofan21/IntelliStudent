@@ -92,7 +92,7 @@ export default function ArchiveGroups() {
     try {
       const [meRes, groupsRes] = await Promise.all([
         api.get("/auth/me"),
-        api.get("/groups", { params: { include_inactive: true } }),
+        api.get("/groups/", { params: { include_inactive: true } }),
       ]);
 
       setMe(meRes.data);

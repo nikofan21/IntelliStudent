@@ -202,8 +202,8 @@ export default function SearchPage() {
 
   async function loadFilters() {
     const [gRes, dRes] = await Promise.all([
-      api.get("/groups"),
-      api.get("/departments"),
+      api.get("/groups/"),
+      api.get("/departments/"),
     ]);
 
     const loadedGroups = Array.isArray(gRes.data) ? gRes.data : [];

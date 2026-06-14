@@ -357,7 +357,9 @@ export default function AdminDocuments() {
 
   async function loadGroups() {
     try {
-      const res = await api.get("/groups?include_inactive=true");
+      const res = await api.get("/groups/", {
+       params: { include_inactive: true },
+      });
       setGroups(res.data);
     } catch (e: any) {
       showError(e?.response?.data?.detail || "Ошибка загрузки групп");
@@ -366,7 +368,7 @@ export default function AdminDocuments() {
 
   async function loadDepartments() {
     try {
-      const res = await api.get("/departments");
+      const res = await api.get("/departments/");
       setDepartments(res.data);
     } catch (e: any) {
       showError(e?.response?.data?.detail || "Ошибка загрузки отделений");

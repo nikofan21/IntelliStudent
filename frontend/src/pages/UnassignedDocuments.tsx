@@ -225,8 +225,8 @@ export default function UnassignedDocuments() {
       const [meRes, docsRes, gRes, sRes] = await Promise.all([
         api.get("/auth/me"),
         api.get("/documents/unassigned"),
-        api.get("/groups"),
-        api.get("/students"),
+        api.get("/groups/"),
+        api.get("/students/"),
       ]);
 
       setMe(meRes.data);

@@ -70,7 +70,7 @@ export default function Dashboard() {
 
   async function loadTeacherDashboard() {
     try {
-      const groupsRes = await api.get("/groups");
+      const groupsRes = await api.get("/groups/");
       const groups = Array.isArray(groupsRes.data) ? groupsRes.data : [];
       setTeacherGroups(groups);
     } catch (error) {
@@ -80,8 +80,8 @@ export default function Dashboard() {
 
   async function loadAdminOrHeadDashboard() {
     try {
-      const studentsRes = await api.get("/students");
-      const groupsRes = await api.get("/groups");
+      const studentsRes = await api.get("/students/");
+      const groupsRes = await api.get("/groups/");
 
       let documents: any[] = [];
       let unassigned: any[] = [];

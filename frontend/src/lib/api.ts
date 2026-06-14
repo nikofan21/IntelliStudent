@@ -6,7 +6,7 @@ import { getToken } from "./auth";
 /* ===================== */
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000",
+  baseURL: "/api",
 });
 
 api.interceptors.request.use((config) => {
@@ -179,4 +179,4 @@ export const deleteDocument = async (doc_id: number) => {
 };
 
 export const downloadDocumentUrl = (doc_id: number) =>
-  `${api.defaults.baseURL}/documents/download/${doc_id}`;
+  `/api/documents/download/${doc_id}`;

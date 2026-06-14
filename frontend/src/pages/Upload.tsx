@@ -36,7 +36,7 @@ export default function UploadPage() {
   };
 
   async function loadGroups() {
-    const res = await api.get("/groups");
+    const res = await api.get("/groups/");
     setGroups(Array.isArray(res.data) ? res.data : []);
   }
 
