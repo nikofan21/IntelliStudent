@@ -210,7 +210,7 @@ class DocumentStudent(Base):
     match_source = Column(String, nullable=False, default="manual")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    document = relationship("Document", back_populates="student_links")
+    document = relationship("Document", back_populates="student_links") 
     student = relationship("Student", back_populates="document_links")
 
 

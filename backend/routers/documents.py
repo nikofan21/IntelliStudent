@@ -21,7 +21,7 @@ from ..models.models import (
 from ..auth.security import get_current_user
 from ..utils.text_extract import detect_file_type, extract_text_from_file, open_docx
 from ..services.ai_client import analyze_text
-from ..services.document_matcher import find_students_by_ai_data
+from ..services.document_matcher import find_students_by_ai_data, MATCHER_VERSION
 from ..services.docx_student_profile import build_student_profile_from_docx
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -37,6 +37,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@router.get("/matcher/version")
+def get_document_matcher_version(
+    user: User = Depends(get_current_user),
+):
+    if user.role not in ["admin", "manager", "head", "teacher"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return {
+        "document_matcher_version": MATCHER_VERSION,
+        "upload_matching_logic": "fio_text_filename_group_safe",
+    }
 
 
 class AssignManyStudentsRequest(BaseModel):
@@ -292,7 +305,13 @@ def upload_document(
         matched_students = chosen_students
         auto_match_source = "manual"
     else:
-        matched_students = find_students_by_ai_data(db, detected_fio, detected_group)
+        matched_students = find_students_by_ai_data(
+            db=db,
+            fio=detected_fio,
+            group_name=detected_group,
+            text_content=text_content,
+            filename=file.filename,
+        )
 
         if user.role == "teacher":
             allowed_group_ids = get_user_group_ids(db, user.id)
@@ -302,16 +321,22 @@ def upload_document(
             ]
 
         if matched_students:
-            auto_match_source = "ai"
+            auto_match_source = "ai_fio_text"
         else:
-            group_students = get_students_by_group_name(db, detected_group)
+            # Если AI увидел ФИО, но уверенного студента найти не удалось,
+            # НЕ привязываем документ ко всей группе.
+            # Иначе личный документ может случайно попасть всем студентам группы.
+            group_students = []
 
-            if user.role == "teacher":
-                allowed_group_ids = get_user_group_ids(db, user.id)
-                group_students = [
-                    s for s in group_students
-                    if s.group_id in allowed_group_ids
-                ]
+            if not detected_fio:
+                group_students = get_students_by_group_name(db, detected_group)
+
+                if user.role == "teacher":
+                    allowed_group_ids = get_user_group_ids(db, user.id)
+                    group_students = [
+                        s for s in group_students
+                        if s.group_id in allowed_group_ids
+                    ]
 
             if group_students:
                 matched_students = group_students
